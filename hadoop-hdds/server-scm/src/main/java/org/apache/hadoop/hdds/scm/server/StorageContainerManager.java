@@ -28,10 +28,12 @@ import com.google.common.cache.RemovalListener;
 import com.google.common.cache.RemovalNotification;
 import com.google.protobuf.BlockingService;
 import org.apache.hadoop.classification.InterfaceAudience;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.HddsUtils;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.NodeState;
 import org.apache.hadoop.hdds.scm.ScmConfigKeys;
+import org.apache.hadoop.hdds.scm.HddsServerUtil;
 import org.apache.hadoop.hdds.scm.block.BlockManager;
 import org.apache.hadoop.hdds.scm.block.BlockManagerImpl;
 import org.apache.hadoop.hdds.scm.block.DeletedBlockLogImpl;
@@ -80,6 +82,9 @@ import org.apache.hadoop.ozone.common.Storage.StorageState;
 import org.apache.hadoop.ozone.common.StorageInfo;
 import org.apache.hadoop.ozone.lease.LeaseManager;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
+import org.apache.hadoop.security.SecurityUtil;
+import org.apache.hadoop.security.authentication.client.AuthenticationException;
 import org.apache.hadoop.util.GenericOptionsParser;
 import org.apache.hadoop.util.StringUtils;
 
@@ -99,6 +104,10 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.TimeUnit;
 
 import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_ENABLED;
+import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_SECURITY_ENABLED_DEFAULT;
+import static org.apache.hadoop.ozone.OzoneConfigKeys.OZONE_SECURITY_ENABLED_KEY;
+import static org.apache.hadoop.hdds.scm.ScmConfigKeys.OZONE_SCM_KERBEROS_PRINCIPAL_KEY;
+import static org.apache.hadoop.hdds.scm.ScmConfigKeys.OZONE_SCM_KERBEROS_KEYTAB_FILE_KEY;
 import static org.apache.hadoop.util.ExitUtil.terminate;
 
 /**
@@ -186,10 +195,16 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
    *
    * @param conf configuration
    */
-  private StorageContainerManager(OzoneConfiguration conf) throws IOException {
+  private StorageContainerManager(OzoneConfiguration conf)
+      throws IOException, AuthenticationException {
 
     StorageContainerManager.initMetrics();
     initContainerReportCache(conf);
+    // Authenticate SCM if security is enabled
+    if (conf.getBoolean(OZONE_SECURITY_ENABLED_KEY,
+        OZONE_SECURITY_ENABLED_DEFAULT)) {
+      loginAsSCMUser(conf);
+    }
 
     scmStorage = new SCMStorage(conf);
     if (scmStorage.getState() != StorageState.INITIALIZED) {
@@ -312,6 +327,33 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
   }
 
   /**
+   * Login as the configured user for SCM.
+   *
+   * @param conf
+   */
+  private void loginAsSCMUser(Configuration conf)
+      throws IOException, AuthenticationException {
+    LOG.debug("Ozone security is enabled. Attempting login for SCM user. "
+            + "Principal: {}, keytab: {}", conf.get
+            (OZONE_SCM_KERBEROS_PRINCIPAL_KEY),
+        conf.get(OZONE_SCM_KERBEROS_KEYTAB_FILE_KEY));
+
+    if (SecurityUtil.getAuthenticationMethod(conf).equals
+        (AuthenticationMethod.KERBEROS)) {
+      UserGroupInformation.setConfiguration(conf);
+      InetSocketAddress socAddr = HddsServerUtil
+          .getScmBlockClientBindAddress(conf);
+      SecurityUtil.login(conf, OZONE_SCM_KERBEROS_KEYTAB_FILE_KEY,
+          OZONE_SCM_KERBEROS_PRINCIPAL_KEY, socAddr.getHostName());
+    } else {
+      throw new AuthenticationException(SecurityUtil.getAuthenticationMethod(
+          conf) + " authentication method not support. "
+          + "SCM user login failed.");
+    }
+    LOG.info("SCM login successful.");
+  }
+
+  /**
    * Builds a message for logging startup information about an RPC server.
    *
    * @param description RPC server description
@@ -405,8 +447,8 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
    * @throws IOException
    */
   @VisibleForTesting
-  public static StorageContainerManager createSCM(
-      String[] args, OzoneConfiguration conf) throws IOException {
+  public static StorageContainerManager createSCM(String[] args,
+      OzoneConfiguration conf) throws IOException, AuthenticationException {
     return createSCM(args, conf, false);
   }
 
@@ -422,7 +464,8 @@ public final class StorageContainerManager extends ServiceRuntimeInfoImpl
   private static StorageContainerManager createSCM(
       String[] args,
       OzoneConfiguration conf,
-      boolean printBanner) throws IOException {
+      boolean printBanner)
+      throws IOException, AuthenticationException {
     String[] argv = (args == null) ? new String[0] : args;
     if (!HddsUtils.isHddsEnabled(conf)) {
       System.err.println(

@@ -28,6 +28,7 @@ import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.hdds.scm.server.StorageContainerManager;
 import org.apache.hadoop.hdds.scm.XceiverClientManager;
+import org.apache.hadoop.security.authentication.client.AuthenticationException;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -111,8 +112,8 @@ public class TestContainerStateManagerIntegration {
   }
 
   @Test
-  public void testContainerStateManagerRestart()
-      throws IOException, TimeoutException, InterruptedException {
+  public void testContainerStateManagerRestart() throws IOException,
+      TimeoutException, InterruptedException, AuthenticationException {
     // Allocate 5 containers in ALLOCATED state and 5 in CREATING state
 
     for (int i = 0; i < 10; i++) {
