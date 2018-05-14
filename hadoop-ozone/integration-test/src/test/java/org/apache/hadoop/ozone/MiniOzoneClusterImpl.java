@@ -427,7 +427,8 @@ public final class MiniOzoneClusterImpl implements MiniOzoneCluster {
      *
      * @throws IOException
      */
-    private OzoneManager createOM() throws IOException {
+    private OzoneManager createOM()
+        throws IOException, AuthenticationException {
       configureOM();
       OMStorage omStore = new OMStorage(conf);
       initializeOmStorage(omStore);
